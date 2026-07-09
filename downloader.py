@@ -99,24 +99,26 @@ def setup_cookies():
     return None
 
 def get_platform_opts(url, is_audio, quality, is_info_stage=False):
-    """تنظیمات yt-dlp با اصلاحات ساختاری"""
+    """تنظیمات هوشمند بر اساس روش تفکیک شده"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
         'noplaylist': True,
+        'ignoreconfig': True, # تغییر 2: نادیده گرفتن کانفیگ‌های مخفی سرور
         'outtmpl': f"video_{int(time.time())}.%(ext)s"
     }
 
-    cookie_file = setup_cookies()
-    if cookie_file:
-        opts['cookiefile'] = cookie_file
+    # تغییر 1: کوکی فقط در مرحله دانلود ارسال شود
+    if not is_info_stage:
+        cookie_file = setup_cookies()
+        if cookie_file:
+            opts['cookiefile'] = cookie_file
 
     if is_info_stage:
         opts['skip_download'] = True
         opts['extract_flat'] = False
-        # تغییر 1: حذف کامل کلید format به جای استفاده از 'all'
         opts.pop('format', None) 
     else:
         opts['progress_hooks'] = [download_progress_hook]
@@ -127,15 +129,15 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
         else:
             opts['merge_output_format'] = 'mp4'
             if quality == 'best':
-                opts['format'] = 'bv*+ba/best'
+                opts['format'] = 'bestvideo*+bestaudio/best'
             else:
-                opts['format'] = f'bv*[height<={quality}]+ba/b[height<={quality}]/bv*+ba/best'
+                opts['format'] = f'bestvideo*[height<={quality}]+bestaudio/b[height<={quality}]/bestvideo*+bestaudio/best'
 
+    # تغییر 3: بازگرداندن extractor_args فقط با کلاینت اندروید
     if "youtube.com" in url or "youtu.be" in url:
-        # تغییر 2: استفاده از ساختار استاندارد و کلاینت اندروید + وب
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['android']
             }
         }
 
@@ -156,6 +158,10 @@ def handle_info():
             stop_fake_progress = True
             t.join(timeout=1)
             
+            # تغییر 4: لاگ‌های تشخیصی برای گیت‌هاب اکشن
+            print("TITLE:", info.get("title"))
+            print("FORMATS:", len(info.get("formats", [])))
+            
             title = info.get('title', 'ویدیو')[:50]
             thumb = info.get('thumbnail')
             video_id = info.get('id')
@@ -164,10 +170,14 @@ def handle_info():
             available_qualities = {}
             
             for f in formats:
-                # تغییر 3: فقط چک کردن vcodec تا فرمت‌های بدون video_ext حذف نشوند
                 if f.get('vcodec') != 'none':
                     h = f.get('height')
-                    size = f.get('filesize') or f.get('filesize_approx') or 0
+                    size = (
+                        f.get('filesize')
+                        or f.get('filesize_approx')
+                        or f.get('filesize_approx_bytes')
+                        or 0
+                    )
                     if h and h >= 144:
                         if h not in available_qualities or size > available_qualities[h]['size']:
                             available_qualities[h] = {'size': size, 'id': f.get('format_id')}
@@ -206,56 +216,43 @@ def handle_info():
 def handle_download():
     global stop_fake_progress
     is_audio = QUALITY in ['mp3', 'mp3320']
-    ydl_opts = get_platform_opts(URL, is_audio, QUALITY, is_info_stage=False)
     
     try:
         stop_fake_progress = False
         t = threading.Thread(target=fake_progress_bar, args=("در حال آماده‌سازی لینک نهایی...",))
         t.start()
         
-        with YoutubeDL(ydl_opts) as ydl:
-            # فقط برای گرفتن اسم ویدیو و چک کردن ترفند لینک مستقیم info رو میگیریم
-            info = ydl.extract_info(URL, download=False)
+        # تغییر 5: تفکیک کامل استخراج اولیه و دانلود نهایی
+        info_opts = get_platform_opts(URL, False, "best", is_info_stage=True)
+        with YoutubeDL(info_opts) as ydl_info:
+            info = ydl_info.extract_info(URL, download=False)
             title = info.get('title', 'Video')[:40]
             platform = info.get('extractor', 'web').split(':')[0].capitalize()
             caption = f"📥 <b>{title}</b>\n🌐 #{platform}"
             
-            target_url = info.get('url')
-            file_size = info.get('filesize') or info.get('filesize_approx') or 0
-
-            stop_fake_progress = True
+        stop_fake_progress = True
+        edit_ui("🚀 <b>در حال دانلود فایل به سرور...</b>\n<i>لطفاً صبور باشید.</i>")
+        
+        download_opts = get_platform_opts(URL, is_audio, QUALITY, is_info_stage=False)
+        with YoutubeDL(download_opts) as ydl_down:
+            ydl_down.download([URL])
             
-            if not is_audio and target_url and 0 < file_size < (19 * 1024 * 1024):
-                res = tg_request("sendVideo", {
-                    "chat_id": str(CHAT_ID), "video": target_url,
-                    "caption": caption, "parse_mode": "HTML",
-                    "reply_to_message_id": str(REPLY_TO)
-                })
-                if res.get("ok"):
-                    tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
-                    return
-            
-            # تغییر 4: استفاده از ydl.download به جای process_ie_result تا دانلود کاملا مستقل انجام شود
-            ydl.download([URL])
-            
-            edit_ui("🚀 <b>در حال ارسال فایل به تلگرام...</b>\n<i>لطفاً صبور باشید.</i>")
-            
-            downloaded_file = next((f for f in os.listdir('.') if f.startswith("video_") and (f.endswith('.mp4') or f.endswith('.mp3'))), None)
-            
-            if downloaded_file:
-                with open(downloaded_file, 'rb') as f:
-                    if is_audio:
-                        res = tg_request("sendAudio", {"chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", "reply_to_message_id": str(REPLY_TO)}, files={"audio": f})
-                    else:
-                        res = tg_request("sendVideo", {"chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", "reply_to_message_id": str(REPLY_TO), "supports_streaming": True}, files={"video": f})
-                
-                if res.get("ok"):
-                    tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
+        downloaded_file = next((f for f in os.listdir('.') if f.startswith("video_") and (f.endswith('.mp4') or f.endswith('.mp3'))), None)
+        
+        if downloaded_file:
+            with open(downloaded_file, 'rb') as f:
+                if is_audio:
+                    res = tg_request("sendAudio", {"chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", "reply_to_message_id": str(REPLY_TO)}, files={"audio": f})
                 else:
-                    err_msg = res.get("description", "")
-                    tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": f"❌ خطا در آپلود: {err_msg}", "reply_to_message_id": str(REPLY_TO)})
+                    res = tg_request("sendVideo", {"chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", "reply_to_message_id": str(REPLY_TO), "supports_streaming": True}, files={"video": f})
+            
+            if res.get("ok"):
+                tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
             else:
-                edit_ui("❌ خطا: فایل استخراج نشد.")
+                err_msg = res.get("description", "")
+                tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": f"❌ خطا در آپلود: {err_msg}", "reply_to_message_id": str(REPLY_TO)})
+        else:
+            edit_ui("❌ خطا: فایل استخراج نشد.")
 
     except Exception as e:
         stop_fake_progress = True
