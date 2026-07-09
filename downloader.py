@@ -99,15 +99,14 @@ def setup_cookies():
     return None
 
 def get_platform_opts(url, is_audio, quality, is_info_stage=False):
-    """تنظیمات هوشمند بر اساس روش پیشنهادی"""
+    """تنظیمات هوشمند بر اساس روش پیشنهادی شما"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'noplaylist': True, # جلوگیری از دانلود پلی لیست
-        'outtmpl': f"video_{int(time.time())}.%(ext)s",
-        'progress_hooks': [download_progress_hook]
+        'noplaylist': True, 
+        'outtmpl': f"video_{int(time.time())}.%(ext)s"
     }
 
     cookie_file = setup_cookies()
@@ -115,19 +114,24 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
         opts['cookiefile'] = cookie_file
 
     if is_info_stage:
-        # روش طلایی: هیچ فرمتی را محدود نمی‌کنیم تا لیست کیفیت ها استخراج شود
-        opts['format'] = 'bv*+ba/best'
-    elif is_audio:
-        abr = '320' if quality == 'mp3320' else '128'
-        opts['format'] = 'bestaudio/best'
-        opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': abr}]
+        # مرحله استخراج: تنظیمات کاملا خام برای جلوگیری از ارور Requested format
+        opts['skip_download'] = True
+        opts['extract_flat'] = False
+        opts['format'] = 'all' # دریافت تمام فرمت های ممکن بدون فیلتر
     else:
-        opts['merge_output_format'] = 'mp4'
-        if quality == 'best':
-            opts['format'] = 'bv*+ba/best'
+        # مرحله دانلود: با Fallback های قدرتمند
+        opts['progress_hooks'] = [download_progress_hook]
+        if is_audio:
+            abr = '320' if quality == 'mp3320' else '128'
+            opts['format'] = 'bestaudio/best'
+            opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': abr}]
         else:
-            # فال بک قدرتمند: اول رزولوشن درخواستی، اگر نبود بهترین موجود
-            opts['format'] = f'bv*[height<={quality}]+ba/best[height<={quality}]/best'
+            opts['merge_output_format'] = 'mp4'
+            if quality == 'best':
+                opts['format'] = 'bv*+ba/best'
+            else:
+                # فال‌بک: اول ویدیو+صدا، بعد فایل یکپارچه، در نهایت بهترین موجود
+                opts['format'] = f'bv*[height<={quality}]+ba/b[height<={quality}]/bv*+ba/best'
 
     if "youtube.com" in url or "youtu.be" in url:
         opts['extractor_args'] = {'youtube': ['player_client=tv,web']}
@@ -139,7 +143,6 @@ def handle_info():
     ydl_opts = get_platform_opts(URL, False, "best", is_info_stage=True)
     
     try:
-        # استارت نوار سبز رنگ 60 ثانیه ای در بک گراند
         stop_fake_progress = False
         t = threading.Thread(target=fake_progress_bar, args=("در حال جستجو و استخراج کیفیت‌ها...",))
         t.start()
@@ -147,7 +150,6 @@ def handle_info():
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(URL, download=False)
             
-            # متوقف کردن نوار سبز رنگ بلافاصله پس از دریافت اطلاعات
             stop_fake_progress = True
             t.join(timeout=1)
             
@@ -159,6 +161,7 @@ def handle_info():
             available_qualities = {}
             
             for f in formats:
+                # چون فرمت را all دادیم، اینجا فقط فرمت‌های دارای تصویر را جدا می‌کنیم
                 if f.get('vcodec') != 'none' and f.get('video_ext') != 'none':
                     h = f.get('height')
                     size = f.get('filesize') or f.get('filesize_approx') or 0
@@ -203,12 +206,12 @@ def handle_download():
     ydl_opts = get_platform_opts(URL, is_audio, QUALITY, is_info_stage=False)
     
     try:
-        # استارت نوار سبز رنگ بک گراند برای قبل از دانلود اصلی
         stop_fake_progress = False
         t = threading.Thread(target=fake_progress_bar, args=("در حال آماده‌سازی لینک نهایی...",))
         t.start()
         
         with YoutubeDL(ydl_opts) as ydl:
+            # اینجا با فال بک قدرتمند دانلود اجرا میشود
             info = ydl.extract_info(URL, download=False)
             title = info.get('title', 'Video')[:40]
             platform = info.get('extractor', 'web').split(':')[0].capitalize()
@@ -219,7 +222,6 @@ def handle_download():
 
             stop_fake_progress = True
             
-            # ارسال مستقیم (فقط فایل های زیر 20 مگابایت)
             if not is_audio and target_url and 0 < file_size < (19 * 1024 * 1024):
                 res = tg_request("sendVideo", {
                     "chat_id": str(CHAT_ID), "video": target_url,
@@ -230,7 +232,6 @@ def handle_download():
                     tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
                     return
             
-            # دانلود به سرور با نوار پیشرفت واقعی
             ydl.process_ie_result(info, download=True)
             
             edit_ui("🚀 <b>در حال ارسال فایل به تلگرام...</b>\n<i>لطفاً صبور باشید.</i>")
