@@ -15,7 +15,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11' # آپدیت به 3.11 برای جلوگیری از اخطار و کرش
 
       - name: Install Core Dependencies
         run: |
@@ -26,15 +26,15 @@ jobs:
 
       - name: Run Python Downloader Engine
         env:
-          # دریافت خودکار توکن از کلودفلر (بدون نیاز به تنظیم دستی)
-          TG_TOKEN: ${{ github.event.client_payload.bot_token }}
+          # پشتیبانی همزمان از توکن ارسال شده از ورکر یا سکرت گیت‌هاب
+          TG_TOKEN: ${{ github.event.client_payload.bot_token || secrets.TG_TOKEN }}
           CHAT_ID: ${{ github.event.client_payload.chat_id }}
           URL: ${{ github.event.client_payload.url }}
           REPLY_TO: ${{ github.event.client_payload.reply_to }}
           WAIT_MSG_ID: ${{ github.event.client_payload.wait_msg_id }}
           ACTION: ${{ github.event.client_payload.action }}
           QUALITY: ${{ github.event.client_payload.quality }}
-          # کوکی ها همچنان از سکرت خوانده می شوند
+          # لود کردن کوکی‌ها
           YT_COOKIE_1: ${{ secrets.YT_COOKIE_1 }}
           YT_COOKIE_2: ${{ secrets.YT_COOKIE_2 }}
           YT_COOKIE_3: ${{ secrets.YT_COOKIE_3 }}
