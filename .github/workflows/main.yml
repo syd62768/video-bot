@@ -10,16 +10,18 @@ jobs:
     
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install Dependencies & Force Update
         run: |
-          pip install yt-dlp requests
+          # آپدیت اجباری به آخرین نسخه برای دور زدن محدودیت‌های یوتیوب
+          python -m pip install --upgrade pip
+          pip install --upgrade yt-dlp requests
           sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Run Python Downloader
