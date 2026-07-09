@@ -31,7 +31,6 @@ def tg_request(method, payload, files=None):
         return {"ok": False, "description": str(e)}
 
 def edit_ui(text):
-    """ویرایشگر هوشمند پیام/کپشن تلگرام"""
     res = tg_request("editMessageText", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "text": text, "parse_mode": "HTML"})
     if not res.get("ok"):
         tg_request("editMessageCaption", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "caption": text, "parse_mode": "HTML"})
@@ -42,22 +41,18 @@ def clean_ansi(text):
     return ansi_escape.sub('', text).strip()
 
 def fake_progress_bar(text_prefix):
-    """نوار پیشرفت سبز رنگ و پویا (ترد بک‌گراند)"""
     global stop_fake_progress
     for i in range(1, 22):
         if stop_fake_progress:
             break
-        
         filled = min(10, (i // 2) + 1)
         empty = 10 - filled
         bar = '🟩' * filled + '⬜️' * empty
         percent = min(99, (i * 4) + random.randint(1, 4))
-        
         edit_ui(f"⏳ <b>{text_prefix}</b>\n\n{bar} {percent}%\n<i>در حال ارتباط با سرورهای پردازش...</i>")
         time.sleep(3)
 
 def download_progress_hook(d):
-    """نوار پیشرفت واقعی برای زمان دانلود فایل"""
     global last_edit_time
     if d['status'] == 'downloading':
         current_time = time.time()
@@ -65,15 +60,10 @@ def download_progress_hook(d):
             percent_str = clean_ansi(d.get('_percent_str', '0%'))
             speed_str = clean_ansi(d.get('_speed_str', 'N/A'))
             eta_str = clean_ansi(d.get('_eta_str', 'N/A'))
-            
-            try:
-                p = float(percent_str.replace('%', ''))
-            except:
-                p = 0
-            
+            try: p = float(percent_str.replace('%', ''))
+            except: p = 0
             filled = int(p / 10)
             bar = '🟩' * filled + '⬜️' * (10 - filled)
-            
             text = f"⏳ <b>در حال دانلود فایل به سرور ربات...</b>\n\n{bar} {percent_str}\n🚀 سرعت: {speed_str}\n⏱ زمان: {eta_str}"
             edit_ui(text)
             last_edit_time = current_time
@@ -88,7 +78,6 @@ def setup_cookies():
     valid_cookies = [c for c in cookies if c and len(c) > 50]
     
     if valid_cookies:
-        # تغییر 1: استفاده از کوکی اول برای جلوگیری از انتخاب کوکی خراب به صورت تصادفی
         selected = valid_cookies[0] 
         selected = selected.replace('\\n', '\n')
         if "# Netscape HTTP Cookie File" not in selected:
@@ -100,26 +89,25 @@ def setup_cookies():
     return None
 
 def get_platform_opts(url, is_audio, quality, is_info_stage=False):
-    """تنظیمات هوشمند بر اساس روش تفکیک شده"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
         'noplaylist': True,
-        'ignoreconfig': True, # تغییر 2: جلوگیری از دخالت کانفیگ‌های خارجی
+        'ignoreconfig': True,
         'outtmpl': f"video_{int(time.time())}.%(ext)s"
     }
 
-    # تغییر 3: کوکی در تمام مراحل (هم info و هم download) ارسال شود تا ربات تشخیص داده نشود
+    # کوکی در هر دو مرحله ارسال می‌شود تا ربات تشخیص داده نشود
     cookie_file = setup_cookies()
     if cookie_file:
         opts['cookiefile'] = cookie_file
 
     if is_info_stage:
         opts['skip_download'] = True
-        opts['extract_flat'] = False
-        opts.pop('format', None) 
+        opts.pop('format', None)
+        # extractor_args در این مرحله اعمال نمی‌شود تا لیست فرمت‌ها کامل بیاید
     else:
         opts['progress_hooks'] = [download_progress_hook]
         if is_audio:
@@ -133,13 +121,13 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
             else:
                 opts['format'] = f'bestvideo*[height<={quality}]+bestaudio/b[height<={quality}]/bestvideo*+bestaudio/best'
 
-    if "youtube.com" in url or "youtu.be" in url:
-        # تغییر 4: بازگرداندن extractor_args اما فقط با کلاینت web
-        opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['web']
+        # کلاینت ها فقط در زمان دانلود اعمال می‌شوند
+        if "youtube.com" in url or "youtu.be" in url:
+            opts['extractor_args'] = {
+                'youtube': {
+                    'player_client': ['android', 'web']
+                }
             }
-        }
 
     return opts
 
@@ -158,8 +146,7 @@ def handle_info():
             stop_fake_progress = True
             t.join(timeout=1)
             
-            # تغییر 5: لاگ‌های تشخیصی مهم در محیط گیت‌هاب
-            print("COOKIE EXISTS:", os.path.exists("cookies.txt"))
+            # لاگ‌های حیاتی برای بررسی در تب Actions
             print("TITLE:", info.get("title"))
             print("FORMATS:", len(info.get("formats", [])))
             
@@ -223,7 +210,6 @@ def handle_download():
         t = threading.Thread(target=fake_progress_bar, args=("در حال آماده‌سازی لینک نهایی...",))
         t.start()
         
-        # تغییر 6: جداسازی کامل آپشن‌های استخراج و دانلود برای جلوگیری از ارور فرمت
         info_opts = get_platform_opts(URL, False, "best", is_info_stage=True)
         with YoutubeDL(info_opts) as ydl_info:
             info = ydl_info.extract_info(URL, download=False)
@@ -277,5 +263,4 @@ if __name__ == "__main__":
     except Exception as main_e:
         print(traceback.format_exc())
         edit_ui("❌ خطای سرور در ارتباط با گیت‌هاب.")
-
 
