@@ -31,7 +31,7 @@ def tg_request(method, payload, files=None):
         return {"ok": False, "description": str(e)}
 
 def edit_ui(text):
-    """هوشمند: تشخیص پیام متنی یا عکس برای ویرایش کپشن"""
+    """ویرایشگر هوشمند پیام/کپشن تلگرام"""
     res = tg_request("editMessageText", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "text": text, "parse_mode": "HTML"})
     if not res.get("ok"):
         tg_request("editMessageCaption", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "caption": text, "parse_mode": "HTML"})
@@ -42,9 +42,9 @@ def clean_ansi(text):
     return ansi_escape.sub('', text).strip()
 
 def fake_progress_bar(text_prefix):
-    """نوار پیشرفت پویا (60 ثانیه ای) در یک ترد بک گراند"""
+    """نوار پیشرفت سبز رنگ و پویا (ترد بک‌گراند)"""
     global stop_fake_progress
-    for i in range(1, 22): # تا حدود 65 ثانیه
+    for i in range(1, 22):
         if stop_fake_progress:
             break
         
@@ -53,11 +53,11 @@ def fake_progress_bar(text_prefix):
         bar = '🟩' * filled + '⬜️' * empty
         percent = min(99, (i * 4) + random.randint(1, 4))
         
-        edit_ui(f"⏳ <b>{text_prefix}</b>\n\n{bar} {percent}%\n<i>در حال ارتباط با سرورهای یوتیوب...</i>")
-        time.sleep(3) # آپدیت هر 3 ثانیه برای جلوگیری از محدودیت تلگرام
+        edit_ui(f"⏳ <b>{text_prefix}</b>\n\n{bar} {percent}%\n<i>در حال ارتباط با سرورهای پردازش...</i>")
+        time.sleep(3)
 
 def download_progress_hook(d):
-    """نوار پیشرفت واقعی در هنگام دانلود فایل به سرور"""
+    """نوار پیشرفت واقعی برای زمان دانلود فایل"""
     global last_edit_time
     if d['status'] == 'downloading':
         current_time = time.time()
@@ -99,13 +99,13 @@ def setup_cookies():
     return None
 
 def get_platform_opts(url, is_audio, quality, is_info_stage=False):
-    """تنظیمات هوشمند بر اساس روش پیشنهادی شما"""
+    """تنظیمات yt-dlp با اصلاحات ساختاری"""
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'noplaylist': True, 
+        'noplaylist': True,
         'outtmpl': f"video_{int(time.time())}.%(ext)s"
     }
 
@@ -114,12 +114,11 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
         opts['cookiefile'] = cookie_file
 
     if is_info_stage:
-        # مرحله استخراج: تنظیمات کاملا خام برای جلوگیری از ارور Requested format
         opts['skip_download'] = True
         opts['extract_flat'] = False
-        opts['format'] = 'all' # دریافت تمام فرمت های ممکن بدون فیلتر
+        # تغییر 1: حذف کامل کلید format به جای استفاده از 'all'
+        opts.pop('format', None) 
     else:
-        # مرحله دانلود: با Fallback های قدرتمند
         opts['progress_hooks'] = [download_progress_hook]
         if is_audio:
             abr = '320' if quality == 'mp3320' else '128'
@@ -130,11 +129,15 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
             if quality == 'best':
                 opts['format'] = 'bv*+ba/best'
             else:
-                # فال‌بک: اول ویدیو+صدا، بعد فایل یکپارچه، در نهایت بهترین موجود
                 opts['format'] = f'bv*[height<={quality}]+ba/b[height<={quality}]/bv*+ba/best'
 
     if "youtube.com" in url or "youtu.be" in url:
-        opts['extractor_args'] = {'youtube': ['player_client=tv,web']}
+        # تغییر 2: استفاده از ساختار استاندارد و کلاینت اندروید + وب
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        }
 
     return opts
 
@@ -161,8 +164,8 @@ def handle_info():
             available_qualities = {}
             
             for f in formats:
-                # چون فرمت را all دادیم، اینجا فقط فرمت‌های دارای تصویر را جدا می‌کنیم
-                if f.get('vcodec') != 'none' and f.get('video_ext') != 'none':
+                # تغییر 3: فقط چک کردن vcodec تا فرمت‌های بدون video_ext حذف نشوند
+                if f.get('vcodec') != 'none':
                     h = f.get('height')
                     size = f.get('filesize') or f.get('filesize_approx') or 0
                     if h and h >= 144:
@@ -211,7 +214,7 @@ def handle_download():
         t.start()
         
         with YoutubeDL(ydl_opts) as ydl:
-            # اینجا با فال بک قدرتمند دانلود اجرا میشود
+            # فقط برای گرفتن اسم ویدیو و چک کردن ترفند لینک مستقیم info رو میگیریم
             info = ydl.extract_info(URL, download=False)
             title = info.get('title', 'Video')[:40]
             platform = info.get('extractor', 'web').split(':')[0].capitalize()
@@ -232,7 +235,8 @@ def handle_download():
                     tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
                     return
             
-            ydl.process_ie_result(info, download=True)
+            # تغییر 4: استفاده از ydl.download به جای process_ie_result تا دانلود کاملا مستقل انجام شود
+            ydl.download([URL])
             
             edit_ui("🚀 <b>در حال ارسال فایل به تلگرام...</b>\n<i>لطفاً صبور باشید.</i>")
             
