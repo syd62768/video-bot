@@ -1,5 +1,4 @@
-
-name: Telegram Video Downloader Pro
+name: Telegram Video Downloader Stable
 
 on:
   repository_dispatch:
@@ -12,44 +11,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Setup Latest Xray Proxy (xhttp support)
-        run: |
-          wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
-          unzip -q xray.zip
-          cat << 'EOF' > config.json
-          {
-            "inbounds": [{"port": 10809, "listen": "127.0.0.1", "protocol": "http"}],
-            "outbounds": [{
-              "protocol": "vless",
-              "settings": {
-                "vnext": [{
-                  "address": "areflover.boobs85.lol",
-                  "port": 8443,
-                  "users": [{"id": "2d01bcf1-7509-4200-8ad2-4253b44c6c2d", "encryption": "none"}]
-                }]
-              },
-              "streamSettings": {
-                "network": "xhttp",
-                "security": "reality",
-                "realitySettings": {
-                  "serverName": "semiconductor.samsung.com",
-                  "publicKey": "J2uJsqj8-7Sgs5yS8--TgSAa-ueFQ8q-ZjWXRfR_33Q",
-                  "shortId": "cddc",
-                  "spiderX": "/26HbjVBSPf2mWyg",
-                  "fingerprint": "chrome"
-                },
-                "xhttpSettings": {
-                  "path": "/lol",
-                  "mode": "auto"
-                }
-              }
-            }]
-          }
-          EOF
-          chmod +x xray
-          ./xray -c config.json &
-          sleep 4
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -72,3 +33,4 @@ jobs:
           ACTION: ${{ github.event.client_payload.action }}
           QUALITY: ${{ github.event.client_payload.quality }}
         run: python downloader.py
+
