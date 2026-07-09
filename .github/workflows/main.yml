@@ -1,4 +1,4 @@
-name: Telegram Video Downloader Speed Engine
+name: Telegram Video Downloader Lightning
 
 on:
   repository_dispatch:
@@ -17,13 +17,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install Latest Developer Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -U yt-dlp requests
+          # نصب نسخه توسعه دهندگان برای عبور از تحریم یوتیوب
+          pip install -U https://github.com/yt-dlp/yt-dlp/archive/master.zip
+          pip install requests
           sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Run Python Downloader
+      - name: Run Python Downloader Engine
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           CHAT_ID: ${{ github.event.client_payload.chat_id }}
