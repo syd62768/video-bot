@@ -26,18 +26,18 @@ jobs:
 
       - name: Run Python Downloader Engine
         env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          # دریافت خودکار توکن از کلودفلر (بدون نیاز به تنظیم دستی)
+          TG_TOKEN: ${{ github.event.client_payload.bot_token }}
           CHAT_ID: ${{ github.event.client_payload.chat_id }}
           URL: ${{ github.event.client_payload.url }}
           REPLY_TO: ${{ github.event.client_payload.reply_to }}
           WAIT_MSG_ID: ${{ github.event.client_payload.wait_msg_id }}
           ACTION: ${{ github.event.client_payload.action }}
           QUALITY: ${{ github.event.client_payload.quality }}
-          # دریافت کوکی ها از سکرت های گیت هاب
+          # کوکی ها همچنان از سکرت خوانده می شوند
           YT_COOKIE_1: ${{ secrets.YT_COOKIE_1 }}
           YT_COOKIE_2: ${{ secrets.YT_COOKIE_2 }}
           YT_COOKIE_3: ${{ secrets.YT_COOKIE_3 }}
           YT_COOKIE_4: ${{ secrets.YT_COOKIE_4 }}
         run: python downloader.py
-
 
