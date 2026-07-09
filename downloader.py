@@ -31,6 +31,7 @@ def tg_request(method, payload, files=None):
         return {"ok": False, "description": str(e)}
 
 def edit_ui(text):
+    """ویرایش پیام (پشتیبانی از کپشن یا متن ساده)"""
     res = tg_request("editMessageText", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "text": text, "parse_mode": "HTML"})
     if not res.get("ok"):
         tg_request("editMessageCaption", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "caption": text, "parse_mode": "HTML"})
@@ -41,30 +42,47 @@ def clean_ansi(text):
     return ansi_escape.sub('', text).strip()
 
 def fake_progress_bar(text_prefix):
+    """نوار لودینگ پویا برای زمان استخراج اطلاعات"""
     global stop_fake_progress
-    for i in range(1, 22):
+    for i in range(1, 30):
         if stop_fake_progress:
             break
-        filled = min(10, (i // 2) + 1)
-        empty = 10 - filled
-        bar = '🟩' * filled + '⬜️' * empty
-        percent = min(99, (i * 4) + random.randint(1, 4))
+        percent = min(99, i * 3)
+        filled = int(percent / 10)
+        bar = '█' * filled + '░' * (10 - filled)
+        
         edit_ui(f"⏳ <b>{text_prefix}</b>\n\n{bar} {percent}%\n<i>در حال ارتباط با سرورهای پردازش...</i>")
-        time.sleep(3)
+        time.sleep(2)
 
 def download_progress_hook(d):
+    """نوار پیشرفت واقعی و جذاب هنگام دانلود"""
     global last_edit_time
     if d['status'] == 'downloading':
         current_time = time.time()
         if current_time - last_edit_time > 3.0:
             percent_str = clean_ansi(d.get('_percent_str', '0%'))
             speed_str = clean_ansi(d.get('_speed_str', 'N/A'))
-            eta_str = clean_ansi(d.get('_eta_str', 'N/A'))
-            try: p = float(percent_str.replace('%', ''))
-            except: p = 0
+            
+            try:
+                p = float(percent_str.replace('%', ''))
+            except:
+                p = 0
+            
             filled = int(p / 10)
-            bar = '🟩' * filled + '⬜️' * (10 - filled)
-            text = f"⏳ <b>در حال دانلود فایل به سرور ربات...</b>\n\n{bar} {percent_str}\n🚀 سرعت: {speed_str}\n⏱ زمان: {eta_str}"
+            bar = '█' * filled + '░' * (10 - filled)
+            
+            quality_text = QUALITY if QUALITY != 'best' else 'بهترین'
+            if 'mp3' in QUALITY: quality_text = 'صوتی MP3'
+            else: quality_text = f"{quality_text}p"
+            
+            text = (
+                f"⏳ <b>در حال پردازش ویدیو...</b>\n\n"
+                f"🔹 کیفیت: {quality_text}\n"
+                f"🔹 استخراج و آماده‌سازی فایل\n\n"
+                f"📥 در حال دانلود در سرور:\n"
+                f"{bar} {percent_str}\n"
+                f"🚀 سرعت: {speed_str}"
+            )
             edit_ui(text)
             last_edit_time = current_time
 
@@ -76,19 +94,17 @@ def setup_cookies():
         os.environ.get("YT_COOKIE_4")
     ]
     valid_cookies = [c for c in cookies if c and len(c) > 50]
-    
     if valid_cookies:
-        selected = valid_cookies[0] 
-        selected = selected.replace('\\n', '\n')
+        selected = valid_cookies[0].replace('\\n', '\n')
         if "# Netscape HTTP Cookie File" not in selected:
             selected = "# Netscape HTTP Cookie File\n" + selected
-            
         with open("cookies.txt", "w", encoding="utf-8") as f:
             f.write(selected)
         return "cookies.txt"
     return None
 
 def get_platform_opts(url, is_audio, quality, is_info_stage=False):
+    """تنظیمات کاملا تفکیک شده برای جلوگیری از خطای فرمت"""
     opts = {
         'quiet': True,
         'no_warnings': True,
@@ -99,17 +115,22 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
         'outtmpl': f"video_{int(time.time())}.%(ext)s"
     }
 
-    # کوکی در هر دو مرحله ارسال می‌شود تا ربات تشخیص داده نشود
     cookie_file = setup_cookies()
     if cookie_file:
         opts['cookiefile'] = cookie_file
 
     if is_info_stage:
+        # مرحله اول: فقط استخراج بدون هیچ فیلتری
         opts['skip_download'] = True
-        opts.pop('format', None)
-        # extractor_args در این مرحله اعمال نمی‌شود تا لیست فرمت‌ها کامل بیاید
+        opts['extract_flat'] = False
+        opts.pop('format', None) 
     else:
+        # مرحله دوم: دانلود با تنظیمات پیشرفته و سرعت بالا
         opts['progress_hooks'] = [download_progress_hook]
+        
+        # ترفند فوق‌العاده برای افزایش سرعت دانلود (مانند IDM)
+        opts['concurrent_fragment_downloads'] = 5 
+        
         if is_audio:
             abr = '320' if quality == 'mp3320' else '128'
             opts['format'] = 'bestaudio/best'
@@ -117,11 +138,11 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
         else:
             opts['merge_output_format'] = 'mp4'
             if quality == 'best':
-                opts['format'] = 'bestvideo*+bestaudio/best'
+                opts['format'] = 'bestvideo+bestaudio/best'
             else:
-                opts['format'] = f'bestvideo*[height<={quality}]+bestaudio/b[height<={quality}]/bestvideo*+bestaudio/best'
+                # فال‌بک قوی: اول ویدیو با ارتفاع مشخص+صدا، بعد ویدیو+صدا با هم، در نهایت بهترین موجود
+                opts['format'] = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best'
 
-        # کلاینت ها فقط در زمان دانلود اعمال می‌شوند
         if "youtube.com" in url or "youtu.be" in url:
             opts['extractor_args'] = {
                 'youtube': {
@@ -137,7 +158,7 @@ def handle_info():
     
     try:
         stop_fake_progress = False
-        t = threading.Thread(target=fake_progress_bar, args=("در حال جستجو و استخراج کیفیت‌ها...",))
+        t = threading.Thread(target=fake_progress_bar, args=("در حال استخراج اطلاعات...",))
         t.start()
         
         with YoutubeDL(ydl_opts) as ydl:
@@ -146,46 +167,34 @@ def handle_info():
             stop_fake_progress = True
             t.join(timeout=1)
             
-            # لاگ‌های حیاتی برای بررسی در تب Actions
-            print("TITLE:", info.get("title"))
-            print("FORMATS:", len(info.get("formats", [])))
-            
-            title = info.get('title', 'ویدیو')[:50]
+            title = info.get('title', 'ویدیو')[:60]
             thumb = info.get('thumbnail')
             video_id = info.get('id')
             
             formats = info.get('formats', [])
-            available_qualities = {}
+            heights_set = set()
             
             for f in formats:
                 if f.get('vcodec') != 'none':
                     h = f.get('height')
-                    size = (
-                        f.get('filesize')
-                        or f.get('filesize_approx')
-                        or f.get('filesize_approx_bytes')
-                        or 0
-                    )
                     if h and h >= 144:
-                        if h not in available_qualities or size > available_qualities[h]['size']:
-                            available_qualities[h] = {'size': size, 'id': f.get('format_id')}
-                            
-            sorted_heights = sorted(available_qualities.keys())
+                        heights_set.add(h)
+                        
+            sorted_heights = sorted(list(heights_set))
             keyboard = []
             row = []
             
+            # چیدمان دکمه ها به صورت دو ستونه
             for h in sorted_heights:
-                size_mb = available_qualities[h]['size'] / (1024*1024)
-                size_str = f"({size_mb:.1f}MB)" if size_mb > 0 else ""
-                row.append({"text": f"🎬 {h}p {size_str}", "callback_data": f"dl|{h}|{video_id}"})
+                row.append({"text": f"🎬 {h}p", "callback_data": f"dl|{h}|{video_id}"})
                 if len(row) == 2:
                     keyboard.append(row)
                     row = []
             if row: keyboard.append(row)
                 
             keyboard.append([
-                {"text": "🎧 صوتی (128)", "callback_data": f"dl|mp3|{video_id}"},
-                {"text": "🎵 صوتی (320)", "callback_data": f"dl|mp3320|{video_id}"}
+                {"text": "🎵 MP3 (128)", "callback_data": f"dl|mp3|{video_id}"},
+                {"text": "🎧 MP3 (320)", "callback_data": f"dl|mp3320|{video_id}"}
             ])
             
             tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
@@ -199,31 +208,29 @@ def handle_info():
     except Exception as e:
         stop_fake_progress = True
         print(traceback.format_exc())
-        edit_ui("❌ <b>خطا در ارتباط با یوتیوب</b>\nویدیو در دسترس نیست یا مسدود شده است.")
+        edit_ui("❌ <b>خطا در ارتباط با سرور</b>\nارتباط با منبع ویدیو برقرار نشد.")
 
 def handle_download():
     global stop_fake_progress
     is_audio = QUALITY in ['mp3', 'mp3320']
     
     try:
-        stop_fake_progress = False
-        t = threading.Thread(target=fake_progress_bar, args=("در حال آماده‌سازی لینک نهایی...",))
-        t.start()
-        
+        # 1. گرفتن نام و اطلاعات کلی به صورت ایمن (بدون فرمت)
         info_opts = get_platform_opts(URL, False, "best", is_info_stage=True)
         with YoutubeDL(info_opts) as ydl_info:
             info = ydl_info.extract_info(URL, download=False)
-            title = info.get('title', 'Video')[:40]
+            title = info.get('title', 'Video')[:50]
             platform = info.get('extractor', 'web').split(':')[0].capitalize()
             caption = f"📥 <b>{title}</b>\n🌐 #{platform}"
             
-        stop_fake_progress = True
-        edit_ui("🚀 <b>در حال دانلود فایل به سرور...</b>\n<i>لطفاً صبور باشید.</i>")
-        
+        # 2. استارت دانلود اختصاصی
         download_opts = get_platform_opts(URL, is_audio, QUALITY, is_info_stage=False)
         with YoutubeDL(download_opts) as ydl_down:
             ydl_down.download([URL])
             
+        edit_ui("📤 <b>در حال آپلود به سرورهای تلگرام...</b>\n<i>لطفاً چند لحظه دیگر صبور باشید.</i>")
+        
+        # 3. پیدا کردن فایل ادغام شده نهایی
         downloaded_file = next((f for f in os.listdir('.') if f.startswith("video_") and (f.endswith('.mp4') or f.endswith('.mp3'))), None)
         
         if downloaded_file:
@@ -237,15 +244,14 @@ def handle_download():
                 tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
             else:
                 err_msg = res.get("description", "")
-                tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": f"❌ خطا در آپلود: {err_msg}", "reply_to_message_id": str(REPLY_TO)})
+                tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": f"❌ خطا در آپلود به تلگرام.", "reply_to_message_id": str(REPLY_TO)})
         else:
             edit_ui("❌ خطا: فایل استخراج نشد.")
 
     except Exception as e:
-        stop_fake_progress = True
         print(traceback.format_exc())
         err = str(e).lower()
-        msg = "❌ حجم ویدیو بسیار بالاست." if "filesize" in err else "❌ خطا در دانلود فایل."
+        msg = "❌ حجم ویدیو بسیار بالاست." if "filesize" in err else "❌ خطا در دانلود فایل یا این کیفیت موجود نیست."
         edit_ui(msg)
         
     finally:
