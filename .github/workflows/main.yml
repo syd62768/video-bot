@@ -15,18 +15,17 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # آپدیت به 3.11 برای جلوگیری از اخطار و کرش
+          python-version: '3.11'
 
-      - name: Install Core Dependencies
+      - name: Install Core Dependencies and Update yt-dlp
         run: |
           python -m pip install --upgrade pip
-          pip install -U https://github.com/yt-dlp/yt-dlp/archive/master.zip
+          pip install -U yt-dlp
           pip install requests
           sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Run Python Downloader Engine
         env:
-          # پشتیبانی همزمان از توکن ارسال شده از ورکر یا سکرت گیت‌هاب
           TG_TOKEN: ${{ github.event.client_payload.bot_token || secrets.TG_TOKEN }}
           CHAT_ID: ${{ github.event.client_payload.chat_id }}
           URL: ${{ github.event.client_payload.url }}
@@ -34,10 +33,10 @@ jobs:
           WAIT_MSG_ID: ${{ github.event.client_payload.wait_msg_id }}
           ACTION: ${{ github.event.client_payload.action }}
           QUALITY: ${{ github.event.client_payload.quality }}
-          # لود کردن کوکی‌ها
           YT_COOKIE_1: ${{ secrets.YT_COOKIE_1 }}
           YT_COOKIE_2: ${{ secrets.YT_COOKIE_2 }}
           YT_COOKIE_3: ${{ secrets.YT_COOKIE_3 }}
           YT_COOKIE_4: ${{ secrets.YT_COOKIE_4 }}
         run: python downloader.py
+
 
