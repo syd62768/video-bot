@@ -88,7 +88,8 @@ def setup_cookies():
     valid_cookies = [c for c in cookies if c and len(c) > 50]
     
     if valid_cookies:
-        selected = random.choice(valid_cookies)
+        # تغییر 1: استفاده از کوکی اول برای جلوگیری از انتخاب کوکی خراب به صورت تصادفی
+        selected = valid_cookies[0] 
         selected = selected.replace('\\n', '\n')
         if "# Netscape HTTP Cookie File" not in selected:
             selected = "# Netscape HTTP Cookie File\n" + selected
@@ -106,15 +107,14 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
         'nocheckcertificate': True,
         'geo_bypass': True,
         'noplaylist': True,
-        'ignoreconfig': True, # تغییر 2: نادیده گرفتن کانفیگ‌های مخفی سرور
+        'ignoreconfig': True, # تغییر 2: جلوگیری از دخالت کانفیگ‌های خارجی
         'outtmpl': f"video_{int(time.time())}.%(ext)s"
     }
 
-    # تغییر 1: کوکی فقط در مرحله دانلود ارسال شود
-    if not is_info_stage:
-        cookie_file = setup_cookies()
-        if cookie_file:
-            opts['cookiefile'] = cookie_file
+    # تغییر 3: کوکی در تمام مراحل (هم info و هم download) ارسال شود تا ربات تشخیص داده نشود
+    cookie_file = setup_cookies()
+    if cookie_file:
+        opts['cookiefile'] = cookie_file
 
     if is_info_stage:
         opts['skip_download'] = True
@@ -133,11 +133,11 @@ def get_platform_opts(url, is_audio, quality, is_info_stage=False):
             else:
                 opts['format'] = f'bestvideo*[height<={quality}]+bestaudio/b[height<={quality}]/bestvideo*+bestaudio/best'
 
-    # تغییر 3: بازگرداندن extractor_args فقط با کلاینت اندروید
     if "youtube.com" in url or "youtu.be" in url:
+        # تغییر 4: بازگرداندن extractor_args اما فقط با کلاینت web
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android']
+                'player_client': ['web']
             }
         }
 
@@ -158,7 +158,8 @@ def handle_info():
             stop_fake_progress = True
             t.join(timeout=1)
             
-            # تغییر 4: لاگ‌های تشخیصی برای گیت‌هاب اکشن
+            # تغییر 5: لاگ‌های تشخیصی مهم در محیط گیت‌هاب
+            print("COOKIE EXISTS:", os.path.exists("cookies.txt"))
             print("TITLE:", info.get("title"))
             print("FORMATS:", len(info.get("formats", [])))
             
@@ -222,7 +223,7 @@ def handle_download():
         t = threading.Thread(target=fake_progress_bar, args=("در حال آماده‌سازی لینک نهایی...",))
         t.start()
         
-        # تغییر 5: تفکیک کامل استخراج اولیه و دانلود نهایی
+        # تغییر 6: جداسازی کامل آپشن‌های استخراج و دانلود برای جلوگیری از ارور فرمت
         info_opts = get_platform_opts(URL, False, "best", is_info_stage=True)
         with YoutubeDL(info_opts) as ydl_info:
             info = ydl_info.extract_info(URL, download=False)
