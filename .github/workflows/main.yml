@@ -1,5 +1,5 @@
 
-name: Telegram Video Downloader Pro Engine
+name: Telegram Video Downloader Pro
 
 on:
   repository_dispatch:
@@ -13,9 +13,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Xray Proxy (Bypass IP Block)
+      - name: Setup Latest Xray Proxy (xhttp support)
         run: |
-          wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/download/v1.8.4/Xray-linux-64.zip
+          wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
           unzip -q xray.zip
           cat << 'EOF' > config.json
           {
@@ -36,38 +36,39 @@ jobs:
                   "serverName": "semiconductor.samsung.com",
                   "publicKey": "J2uJsqj8-7Sgs5yS8--TgSAa-ueFQ8q-ZjWXRfR_33Q",
                   "shortId": "cddc",
-                  "spiderX": "/26HbjVBSPf2mWyg"
+                  "spiderX": "/26HbjVBSPf2mWyg",
+                  "fingerprint": "chrome"
                 },
-                "xhttpSettings": {"path": "/lol", "mode": "auto"}
+                "xhttpSettings": {
+                  "path": "/lol",
+                  "mode": "auto"
+                }
               }
             }]
           }
           EOF
+          chmod +x xray
           ./xray -c config.json &
-          sleep 3
+          sleep 4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies & FFmpeg
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade yt-dlp requests
           sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Run Python Engine
+      - name: Run Python Downloader
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           CHAT_ID: ${{ github.event.client_payload.chat_id }}
           URL: ${{ github.event.client_payload.url }}
           REPLY_TO: ${{ github.event.client_payload.reply_to }}
           WAIT_MSG_ID: ${{ github.event.client_payload.wait_msg_id }}
-          ACTION_TYPE: ${{ github.event.client_payload.action_type }}
+          ACTION: ${{ github.event.client_payload.action }}
           QUALITY: ${{ github.event.client_payload.quality }}
-          # اعمال پروکسی محلی روی پایتون
-          HTTP_PROXY: "http://127.0.0.1:10809"
-          HTTPS_PROXY: "http://127.0.0.1:10809"
         run: python downloader.py
-
