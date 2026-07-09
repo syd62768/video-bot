@@ -4,103 +4,94 @@ import json
 import time
 from yt_dlp import YoutubeDL
 
-# اطلاعات دریافتی از GitHub Actions
 TG_TOKEN = os.environ.get("TG_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 URL = os.environ.get("URL")
 REPLY_TO = os.environ.get("REPLY_TO")
 WAIT_MSG_ID = os.environ.get("WAIT_MSG_ID")
-MODE = os.environ.get("MODE", "info") # info or download
+ACTION = os.environ.get("ACTION", "info")
 QUALITY = os.environ.get("QUALITY", "best")
 
-# پروکسی ست شده توسط Xray در گیت‌هاب
-PROXY = "http://127.0.0.1:10809"
-
-def api_call(method, payload, files=None):
+def tg_request(method, payload, files=None):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/{method}"
     try:
         if files:
-            res = requests.post(url, data=payload, files=files)
+            # ارسال فایل نیاز به data دارد نه json
+            r = requests.post(url, data=payload, files=files)
         else:
-            res = requests.post(url, json=payload)
-        return res.json()
+            r = requests.post(url, json=payload)
+        return r.json()
     except Exception as e:
         return {"ok": False, "description": str(e)}
 
 def edit_status(text):
-    api_call("editMessageText", {"chat_id": CHAT_ID, "message_id": WAIT_MSG_ID, "text": text, "parse_mode": "HTML"})
-
-def generate_youtube_buttons(video_id):
-    return json.dumps({
-        "inline_keyboard": [
-            [{"text": "🎬 دانلود با کیفیت 360p", "callback_data": f"360|{video_id}"}],
-            [{"text": "🎬 دانلود با کیفیت 480p", "callback_data": f"480|{video_id}"}],
-            [{"text": "🎬 دانلود با کیفیت 720p", "callback_data": f"720|{video_id}"}],
-            [{"text": "🎬 دانلود با کیفیت 1080p", "callback_data": f"1080|{video_id}"}],
-            [{"text": "🎧 دانلود صوتی (MP3)", "callback_data": f"mp3|{video_id}"}]
-        ]
-    })
+    tg_request("editMessageText", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "text": text, "parse_mode": "HTML"})
 
 def handle_info():
-    """مرحله اول: استخراج اطلاعات و نمایش دکمه‌ها (فقط برای یوتیوب)"""
-    # تنظیمات پایه (بدون دانلود فایل)
+    """استخراج اطلاعات اولیه: اگر یوتیوب بود دکمه میده، در غیر این صورت مستقیم دانلود میکنه"""
     ydl_opts = {
-        'proxy': PROXY, 
         'quiet': True, 
-        'no_warnings': True,
-        'nocheckcertificate': True
+        'nocheckcertificate': True,
+        'geo_bypass': True
     }
     
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(URL, download=False)
-            platform = info.get('extractor', '').lower()
+            extractor = info.get('extractor', '').lower()
             
-            # اگر یوتیوب باشد -> دکمه‌های کیفیت بفرست
-            if 'youtube' in platform:
-                title = info.get('title', 'YouTube Video')
+            if 'youtube' in extractor:
+                title = info.get('title', 'ویدیو یوتیوب')
+                thumb = info.get('thumbnail')
                 video_id = info.get('id')
                 
-                text = f"🎥 <b>{title[:100]}</b>\n\n👇 <i>لطفاً کیفیت مورد نظر را انتخاب کنید:</i>"
+                # کیبورد شیشه ای دقیقاً مشابه تصویر ربات رقیب
+                kb = {
+                    "inline_keyboard": [
+                        [{"text": "🎬 دانلود با کیفیت 360p", "callback_data": f"dl|360|{video_id}"}],
+                        [{"text": "🎬 دانلود با کیفیت 480p", "callback_data": f"dl|480|{video_id}"}],
+                        [{"text": "🎬 دانلود با کیفیت 720p", "callback_data": f"dl|720|{video_id}"}],
+                        [{"text": "🎬 دانلود با کیفیت 1080p", "callback_data": f"dl|1080|{video_id}"}],
+                        [{"text": "🎧 mp3 - (128)", "callback_data": f"dl|mp3|{video_id}"}, {"text": "🎧 mp3 - (320)", "callback_data": f"dl|mp3320|{video_id}"}]
+                    ]
+                }
                 
-                # ویرایش پیام "در حال استخراج" به منوی انتخاب کیفیت
-                api_call("editMessageText", {
-                    "chat_id": CHAT_ID,
-                    "message_id": WAIT_MSG_ID,
-                    "text": text,
+                # حذف پیام متنی قبلی
+                tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
+                
+                # ارسال کاور و دکمه ها
+                tg_request("sendPhoto", {
+                    "chat_id": str(CHAT_ID),
+                    "photo": thumb,
+                    "caption": f"🎥 <b>{title[:100]}</b>\n\n👇 <i>هنوزم این اسنایپ هارو جای دیگه نمیبینید (انتخاب کیفیت)</i>",
                     "parse_mode": "HTML",
-                    "reply_markup": generate_youtube_buttons(video_id)
+                    "reply_to_message_id": str(REPLY_TO),
+                    "reply_markup": json.dumps(kb)
                 })
             else:
-                # اگر اینستاگرام یا سایت دیگر است -> مستقیم دانلود کن (بدون دکمه)
                 edit_status("⬇️ <b>اطلاعات یافت شد! در حال دانلود مستقیم...</b>")
-                handle_download(info, platform, is_direct=True)
+                handle_download(info, is_direct=True)
 
     except Exception as e:
-        error_msg = str(e).lower()
-        if "sign in" in error_msg or "bot" in error_msg:
-             edit_status("❌ <b>محدودیت یوتیوب:</b>\nپروکسی موقتا مسدود است.")
-        else:
-             edit_status(f"❌ <b>خطا در استخراج اطلاعات:</b>\nلینک نامعتبر است یا محتوا خصوصی می‌باشد.")
+        edit_status("❌ <b>خطا در استخراج اطلاعات:</b>\nلینک نامعتبر است، ویدیو خصوصی است یا نیاز به لاگین دارد.")
 
-def handle_download(pre_info=None, platform_name="Youtube", is_direct=False):
-    """مرحله دوم: دانلود و ارسال فایل نهایی"""
+def handle_download(pre_info=None, is_direct=False):
+    """دانلود و ارسال ویدیو یا موزیک"""
     file_name = f"video_{int(time.time())}"
     
-    # تنظیمات پیشرفته و جلوگیری از گیف شدن فایل
     ydl_opts = {
-        'proxy': PROXY,
-        'outtmpl': file_name + '.%(ext)s',
+        'outtmpl': f"{file_name}.%(ext)s",
         'quiet': True,
         'no_warnings': True,
-        'merge_output_format': 'mp4', # این خط جلوی گیف شدن اینستا رو میگیره
-        'nocheckcertificate': True
+        'merge_output_format': 'mp4', # اجبار فرمت به MP4 برای جلوگیری از خطای تلگرام
+        'nocheckcertificate': True,
+        'geo_bypass': True
     }
 
-    # تعیین فرمت بر اساس کیفیت انتخابی
-    if QUALITY == 'mp3':
+    if QUALITY == 'mp3' or QUALITY == 'mp3320':
+        abr = '320' if QUALITY == 'mp3320' else '128'
         ydl_opts['format'] = 'bestaudio/best'
-        ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
+        ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': abr}]
         final_ext = "mp3"
     elif QUALITY == 'best' or is_direct:
         ydl_opts['format'] = 'bestvideo[ext=mp4][filesize<=50M]+bestaudio[ext=m4a]/best[ext=mp4]/best'
@@ -111,56 +102,62 @@ def handle_download(pre_info=None, platform_name="Youtube", is_direct=False):
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            if not is_direct:
-                info = ydl.extract_info(URL, download=False)
-                title = info.get('title', 'Video')
-                platform_name = info.get('extractor', 'web').split(':')[0].capitalize()
-            else:
-                title = pre_info.get('title', 'Video') if pre_info else 'Video'
-                platform_name = platform_name.capitalize()
-
-            ydl.download([URL])
-            downloaded_file = f"{file_name}.{final_ext}"
+            info = pre_info if is_direct else ydl.extract_info(URL, download=False)
+            title = info.get('title', 'Video')
+            platform = info.get('extractor', 'web').split(':')[0].capitalize()
             
-            caption = f"📥 <b>{title[:70]}</b>\n🌐 پلتفرم: #{platform_name}\n\n🤖 @ndlVideobot"
-            reply_markup = json.dumps({"inline_keyboard": [[{"text": "🔗 لینک اصلی ویدیو", "url": URL}]]})
-
-            # ارسال فایل به تلگرام
-            with open(downloaded_file, 'rb') as f:
-                if final_ext == "mp3":
-                    result = api_call("sendAudio", {
-                        "chat_id": CHAT_ID, "caption": caption, "parse_mode": "HTML", 
-                        "reply_to_message_id": REPLY_TO, "reply_markup": reply_markup
-                    }, files={"audio": f})
-                else:
-                    result = api_call("sendVideo", {
-                        "chat_id": CHAT_ID, "caption": caption, "parse_mode": "HTML", 
-                        "reply_to_message_id": REPLY_TO, "reply_markup": reply_markup,
-                        "supports_streaming": True # مهمترین پارامتر برای ویدیو شدن به جای گیف
-                    }, files={"video": f})
-
-            if result.get("ok"):
-                api_call("deleteMessage", {"chat_id": CHAT_ID, "message_id": WAIT_MSG_ID})
-            else:
-                err_desc = result.get('description', '')
-                if "Too Large" in err_desc or "entity too large" in err_desc.lower():
-                     edit_status("❌ <b>خطا:</b> حجم فایل نهایی بیشتر از ۵۰ مگابایت است.")
-                else:
-                     edit_status(f"❌ <b>خطا در آپلود تلگرام.</b>")
-
+            ydl.download([URL])
+            
+            # پیدا کردن فایل خروجی دقیق در سیستم
+            downloaded_file = f"{file_name}.{final_ext}"
+            if not os.path.exists(downloaded_file):
+                for f in os.listdir('.'):
+                    if f.startswith(file_name):
+                        downloaded_file = f
+                        break
+            
             if os.path.exists(downloaded_file):
+                caption = f"📥 <b>{title[:70]}</b>\n🌐 پلتفرم: #{platform}\n\n🤖 @ndlVideobot"
+                kb = {"inline_keyboard": [[{"text": "🔗 لینک اصلی ویدیو", "url": URL}]]}
+                
+                with open(downloaded_file, 'rb') as f:
+                    if final_ext == "mp3":
+                        res = tg_request("sendAudio", {
+                            "chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", 
+                            "reply_to_message_id": str(REPLY_TO), "reply_markup": json.dumps(kb)
+                        }, files={"audio": f})
+                    else:
+                        # برای ویدیوهای اینستاگرام، supports_streaming: "true" جلوی گیف شدن را کامل میگیرد
+                        res = tg_request("sendVideo", {
+                            "chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", 
+                            "reply_to_message_id": str(REPLY_TO), "reply_markup": json.dumps(kb),
+                            "supports_streaming": "true" 
+                        }, files={"video": f})
+                
+                if res.get("ok"):
+                    tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
+                else:
+                    err_msg = res.get("description", "")
+                    if "too large" in err_msg.lower():
+                        tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": "❌ حجم فایل بیشتر از ۵۰ مگابایت است.", "reply_to_message_id": str(REPLY_TO)})
+                    else:
+                        tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": f"❌ خطا در ارسال به تلگرام: {err_msg}", "reply_to_message_id": str(REPLY_TO)})
+                
                 os.remove(downloaded_file)
+            else:
+                edit_status("❌ خطا: فایل از سرور استخراج نشد.")
 
     except Exception as e:
         err = str(e).lower()
         if "filesize" in err:
-            edit_status("❌ <b>خطا:</b> حجم ویدیو از محدودیت تلگرام بیشتر است.")
+            edit_status("❌ <b>خطا:</b> حجم ویدیو از ۵۰ مگابایت بیشتر است.")
         else:
-            edit_status("❌ <b>خطا در دانلود یا پردازش فایل.</b>")
+            edit_status("❌ <b>خطا در پردازش فایل:</b>\nلینک مشکل دارد یا دانلود مسدود شده است.")
 
 if __name__ == "__main__":
-    if MODE == "info":
+    if ACTION == "info":
         handle_info()
-    elif MODE == "download":
+    elif ACTION == "download":
         handle_download()
+
 
