@@ -1,4 +1,4 @@
-name: Telegram Video Downloader Stable
+name: Telegram Video Downloader Speed Engine
 
 on:
   repository_dispatch:
@@ -20,7 +20,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade yt-dlp requests
+          pip install -U yt-dlp requests
           sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Run Python Downloader
@@ -33,4 +33,5 @@ jobs:
           ACTION: ${{ github.event.client_payload.action }}
           QUALITY: ${{ github.event.client_payload.quality }}
         run: python downloader.py
+
 
