@@ -1,0 +1,38 @@
+name: Telegram Video Downloader Engine
+
+# این بخش به گیت‌هاب می‌گوید فقط وقتی از کلودفلر پیام آمد روشن شو
+on:
+  repository_dispatch:
+    types: [start_video_download]
+
+jobs:
+  process-video:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install yt-dlp requests
+          # نصب ffmpeg برای چسباندن صدا و تصویر یوتیوب
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Run Python Downloader
+        env:
+          # توکن تلگرام از تنظیمات مخفی گیت‌هاب خوانده می‌شود
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          # بقیه اطلاعات از پیام کلودفلر خوانده می‌شود
+          CHAT_ID: ${{ github.event.client_payload.chat_id }}
+          URL: ${{ github.event.client_payload.url }}
+          REPLY_TO: ${{ github.event.client_payload.reply_to }}
+          WAIT_MSG_ID: ${{ github.event.client_payload.wait_msg_id }}
+        run: python downloader.py
+
+
