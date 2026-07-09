@@ -2,6 +2,8 @@ import os
 import requests
 import json
 import time
+import random
+import re
 import traceback
 from yt_dlp import YoutubeDL
 
@@ -13,6 +15,9 @@ WAIT_MSG_ID = os.environ.get("WAIT_MSG_ID")
 ACTION = os.environ.get("ACTION", "info")
 QUALITY = os.environ.get("QUALITY", "best")
 
+# زمان آخرین ویرایش پیام برای جلوگیری از فلود شدن در تلگرام (ویرایش هر 3 ثانیه)
+last_edit_time = 0
+
 def tg_request(method, payload, files=None):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/{method}"
     try:
@@ -22,7 +27,6 @@ def tg_request(method, payload, files=None):
             r = requests.post(url, json=payload)
         return r.json()
     except Exception as e:
-        print(f"Telegram API Error: {e}")
         return {"ok": False, "description": str(e)}
 
 def edit_status(text):
@@ -31,8 +35,60 @@ def edit_status(text):
 def edit_caption(text):
     tg_request("editMessageCaption", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID), "caption": text, "parse_mode": "HTML"})
 
+def clean_ansi(text):
+    """پاک کردن کدهای رنگی ترمینال از خروجی yt-dlp"""
+    if not text: return ""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text).strip()
+
+def download_progress_hook(d):
+    """هوک پیشرفت دانلود برای نمایش نوار سبز رنگ داینامیک"""
+    global last_edit_time
+    if d['status'] == 'downloading':
+        current_time = time.time()
+        # تلگرام اجازه نمی‌دهد تند تند پیام ویرایش شود، هر ۳ ثانیه یکبار آپدیت می‌کنیم
+        if current_time - last_edit_time > 3.0:
+            percent_str = clean_ansi(d.get('_percent_str', '0%'))
+            speed_str = clean_ansi(d.get('_speed_str', 'N/A'))
+            eta_str = clean_ansi(d.get('_eta_str', 'N/A'))
+            
+            try:
+                p = float(percent_str.replace('%', ''))
+            except:
+                p = 0
+            
+            filled = int(p / 10)
+            bar = '🟩' * filled + '⬜️' * (10 - filled)
+            
+            text = f"⏳ <b>در حال دانلود از سرور...</b>\n\n{bar} {percent_str}\n🚀 سرعت: {speed_str}\n⏱ زمان: {eta_str}"
+            
+            if 'dl|' in QUALITY:
+                edit_caption(text)
+            else:
+                edit_status(text)
+                
+            last_edit_time = current_time
+
+def setup_cookies():
+    """مدیریت هوشمند و چرخشی کوکی‌ها"""
+    # خواندن 4 کوکی مختلف از تنظیمات گیت هاب
+    cookies = [
+        os.environ.get("YT_COOKIE_1"),
+        os.environ.get("YT_COOKIE_2"),
+        os.environ.get("YT_COOKIE_3"),
+        os.environ.get("YT_COOKIE_4")
+    ]
+    valid_cookies = [c for c in cookies if c and len(c) > 50]
+    
+    if valid_cookies:
+        # انتخاب یک کوکی به صورت رندوم برای جلوگیری از بن شدن اکانت
+        selected_cookie = random.choice(valid_cookies)
+        with open("cookies.txt", "w", encoding="utf-8") as f:
+            f.write(selected_cookie)
+        return "cookies.txt"
+    return None
+
 def get_platform_opts(url, is_audio, quality):
-    """تنظیمات اختصاصی yt-dlp بر اساس پلتفرم (شرط 10 تا 16)"""
     opts = {
         'quiet': True,
         'no_warnings': True,
@@ -40,9 +96,14 @@ def get_platform_opts(url, is_audio, quality):
         'geo_bypass': True,
         'outtmpl': f"video_{int(time.time())}.%(ext)s",
         'merge_output_format': 'mp4',
+        'progress_hooks': [download_progress_hook] # اتصال نوار پیشرفت
     }
 
-    # تعیین فرمت بر اساس درخواست
+    # اعمال سیستم کوکی برای یوتیوب
+    cookie_file = setup_cookies()
+    if cookie_file:
+        opts['cookiefile'] = cookie_file
+
     if is_audio:
         abr = '320' if quality == 'mp3320' else '128'
         opts['format'] = 'bestaudio/best'
@@ -52,107 +113,85 @@ def get_platform_opts(url, is_audio, quality):
     else:
         opts['format'] = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[height<={quality}][ext=mp4]/best'
 
-    # کانفیگ اختصاصی پلتفرم ها
     if "youtube.com" in url or "youtu.be" in url:
         opts['extractor_args'] = {'youtube': ['player_client=android,web,ios']}
-        if "shorts" in url:
-            opts['format'] = 'best[ext=mp4]/best' # شورتس معمولاً فرمت یکپارچه بهتری دارد
+        if "shorts" in url: opts['format'] = 'best[ext=mp4]/best'
     elif "instagram.com" in url:
-        opts['http_headers'] = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    elif "tiktok.com" in url:
-        opts['format'] = 'best[ext=mp4]/best' # برای تیک تاک فرمت سینگل بهتر است
-    elif "reddit.com" in url:
-        pass
-    elif "twitter.com" in url or "x.com" in url:
-        pass
-    elif "facebook.com" in url or "fb.watch" in url:
-        pass
-
+        opts['http_headers'] = {'User-Agent': 'Mozilla/5.0'}
+    
     return opts
 
-def get_file_size(fmt):
-    """بررسی دقیق حجم فایل با هر دو پارامتر (شرط 3)"""
-    return fmt.get('filesize') or fmt.get('filesize_approx') or 0
-
 def handle_info():
-    """استخراج داینامیک کیفیت ها برای یوتیوب (شرط 2)"""
+    """پنل شیشه ای و جذاب یوتیوب"""
     ydl_opts = get_platform_opts(URL, False, "best")
     
     try:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(URL, download=False)
-            title = info.get('title', 'ویدیو')[:40] # کوتاه کردن عنوان (شرط 19)
+            title = info.get('title', 'ویدیو')[:50]
             thumb = info.get('thumbnail')
             video_id = info.get('id')
             
             formats = info.get('formats', [])
-            available_heights = set()
+            available_qualities = {}
             
-            # پیدا کردن کیفیت های واقعی و موجود
             for f in formats:
                 if f.get('vcodec') != 'none' and f.get('ext') == 'mp4':
                     h = f.get('height')
+                    size = f.get('filesize') or f.get('filesize_approx') or 0
                     if h and h >= 144:
-                        available_heights.add(h)
-                        
-            sorted_heights = sorted(list(available_heights))
+                        # نگه داشتن بهترین سایز برای هر کیفیت
+                        if h not in available_qualities or size > available_qualities[h]['size']:
+                            available_qualities[h] = {'size': size, 'id': f.get('format_id')}
+                            
+            sorted_heights = sorted(available_qualities.keys())
             keyboard = []
-            
-            # ساخت داینامیک دکمه ها
             row = []
+            
             for h in sorted_heights:
-                row.append({"text": f"🎬 {h}p", "callback_data": f"dl|{h}|{video_id}"})
+                size_mb = available_qualities[h]['size'] / (1024*1024)
+                size_str = f"({size_mb:.1f}MB)" if size_mb > 0 else ""
+                row.append({"text": f"🎬 {h}p {size_str}", "callback_data": f"dl|{h}|{video_id}"})
                 if len(row) == 2:
                     keyboard.append(row)
                     row = []
-            if row:
-                keyboard.append(row)
+            if row: keyboard.append(row)
                 
             keyboard.append([
-                {"text": "🎧 mp3 (128)", "callback_data": f"dl|mp3|{video_id}"},
-                {"text": "🎧 mp3 (320)", "callback_data": f"dl|mp3320|{video_id}"}
+                {"text": "🎧 صوتی (128)", "callback_data": f"dl|mp3|{video_id}"},
+                {"text": "🎵 صوتی (320)", "callback_data": f"dl|mp3320|{video_id}"}
             ])
             
             tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
             tg_request("sendPhoto", {
                 "chat_id": str(CHAT_ID), "photo": thumb,
-                "caption": f"🎥 <b>{title}</b>\n\n👇 <i>لطفا کیفیت را انتخاب کنید:</i>",
+                "caption": f"🎥 <b>{title}</b>\n\n👇 <i>یک کیفیت را از پنل زیر انتخاب کنید:</i>",
                 "parse_mode": "HTML", "reply_to_message_id": str(REPLY_TO), 
                 "reply_markup": json.dumps({"inline_keyboard": keyboard})
             })
 
     except Exception as e:
-        print(traceback.format_exc()) # ثبت خطا در گیت هاب (شرط 8)
-        edit_status("❌ خطا در استخراج اطلاعات از یوتیوب.")
+        print(traceback.format_exc())
+        edit_status("❌ <b>خطا در ارتباط با یوتیوب</b>\nاحتمالاً کوکی‌ها منقضی شده‌اند یا ویدیو خصوصی است.")
 
 def handle_download():
-    """پردازش هوشمند: اول لینک مستقیم، اگر نشد دانلود بدون استخراج مجدد (شرط 5 و 6 و 17)"""
     is_audio = QUALITY in ['mp3', 'mp3320']
     ydl_opts = get_platform_opts(URL, is_audio, QUALITY)
     
     try:
         with YoutubeDL(ydl_opts) as ydl:
             if not is_audio:
-                edit_caption("🔍 در حال استخراج اطلاعات...") if 'dl|' in QUALITY else edit_status("🔍 در حال استخراج اطلاعات...")
+                edit_caption("🔍 در حال آماده‌سازی فایل...") if 'dl|' in QUALITY else edit_status("🔍 در حال آماده‌سازی فایل...")
             
-            # 1. استخراج اطلاعات بدون دانلود
             info = ydl.extract_info(URL, download=False)
             title = info.get('title', 'Video')[:40]
             platform = info.get('extractor', 'web').split(':')[0].capitalize()
             caption = f"📥 <b>{title}</b>\n🌐 #{platform}"
             
-            # یافتن بهترین فرمت انتخاب شده
-            target_url = None
-            file_size = 0
-            
-            if 'requested_formats' in info: # فرمت های ویدیو + صدا (مرج شده)
-                for f in info['requested_formats']:
-                    file_size += get_file_size(f)
-            else:
-                target_url = info.get('url')
-                file_size = get_file_size(info)
+            target_url = info.get('url')
+            file_size = info.get('filesize') or info.get('filesize_approx') or 0
 
-            # 2. تلاش برای ارسال با لینک مستقیم (زیر 20 مگابایت)
+            # ارسال فوق سریع با URL (بدون نیاز به دانلود روی سرور) برای فایلهای کوچک
             if not is_audio and target_url and file_size < (20 * 1024 * 1024):
                 res = tg_request("sendVideo", {
                     "chat_id": str(CHAT_ID), "video": target_url,
@@ -161,65 +200,41 @@ def handle_download():
                 })
                 if res.get("ok"):
                     tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
-                    return # پایان موفقیت آمیز با لینک مستقیم
+                    return
             
-            # 3. در صورت شکست لینک مستقیم یا فایل بزرگ (دانلود توسط سرور)
-            # نکته کلیدی شرط 5: از ydl.process_ie_result استفاده میکنیم تا دوباره extract نکند
-            if not is_audio:
-                edit_caption("⬇️ در حال دانلود به سرور...") if 'dl|' in QUALITY else edit_status("⬇️ در حال دانلود به سرور...")
-                
+            # در صورت نیاز به دانلود (نوار سبز رنگ اینجا فعال می‌شود)
             ydl.process_ie_result(info, download=True)
             
-            # 4. پیدا کردن فایل و ارسال
-            downloaded_file = None
-            for f in os.listdir('.'):
-                if f.startswith("video_") and (f.endswith('.mp4') or f.endswith('.mp3')):
-                    downloaded_file = f
-                    break
+            edit_caption("🚀 در حال آپلود به تلگرام...") if 'dl|' in QUALITY else edit_status("🚀 در حال آپلود به تلگرام...")
+            
+            downloaded_file = next((f for f in os.listdir('.') if f.startswith("video_") and (f.endswith('.mp4') or f.endswith('.mp3'))), None)
             
             if downloaded_file:
-                if not is_audio:
-                     edit_caption("🚀 در حال آپلود به تلگرام...") if 'dl|' in QUALITY else edit_status("🚀 در حال آپلود به تلگرام...")
-                     
                 with open(downloaded_file, 'rb') as f:
                     if is_audio:
-                        res = tg_request("sendAudio", {
-                            "chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", 
-                            "reply_to_message_id": str(REPLY_TO)
-                        }, files={"audio": f})
+                        res = tg_request("sendAudio", {"chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", "reply_to_message_id": str(REPLY_TO)}, files={"audio": f})
                     else:
-                        res = tg_request("sendVideo", {
-                            "chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", 
-                            "reply_to_message_id": str(REPLY_TO),
-                            "supports_streaming": True 
-                        }, files={"video": f})
+                        res = tg_request("sendVideo", {"chat_id": str(CHAT_ID), "caption": caption, "parse_mode": "HTML", "reply_to_message_id": str(REPLY_TO), "supports_streaming": True}, files={"video": f})
                 
                 if res.get("ok"):
                     tg_request("deleteMessage", {"chat_id": str(CHAT_ID), "message_id": str(WAIT_MSG_ID)})
                 else:
                     err_msg = res.get("description", "")
-                    tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": f"❌ خطا در ارسال: {err_msg}", "reply_to_message_id": str(REPLY_TO)})
+                    tg_request("sendMessage", {"chat_id": str(CHAT_ID), "text": f"❌ خطا در آپلود: {err_msg}", "reply_to_message_id": str(REPLY_TO)})
             else:
                 edit_status("❌ خطا: فایل تولید نشد.")
 
     except Exception as e:
-        print(traceback.format_exc()) # ثبت خطا در لاگ گیت هاب
+        print(traceback.format_exc())
         err = str(e).lower()
-        if "filesize" in err:
-             msg = "❌ حجم ویدیو بسیار بالاست."
-        else:
-             msg = "❌ خطا در پردازش یا محدودیت پلتفرم مبدا."
-        
+        msg = "❌ حجم ویدیو بالاست." if "filesize" in err else "❌ خطا در پردازش یا قطعی موقت."
         edit_caption(msg) if 'dl|' in QUALITY else edit_status(msg)
         
     finally:
-        # پاکسازی تمام فایل های تولید شده (شرط 22)
         for f in os.listdir('.'):
-            if f.startswith("video_"):
-                try:
-                    os.remove(f)
-                except:
-                    pass
+            if f.startswith("video_") or f == "cookies.txt":
+                try: os.remove(f)
+                except: pass
 
 if __name__ == "__main__":
     if ACTION == "info":
